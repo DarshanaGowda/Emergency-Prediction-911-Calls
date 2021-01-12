@@ -1,0 +1,195 @@
+---
+title: "911"
+author: "Darshana Gowda"
+date: "`r format(Sys.time(), '%B %e, %Y')`"
+output: html_notebook
+---
+
+## Loading packages
+```{r}
+library(dplyr)
+library(caret)
+library(lubridate)
+library(dummies)
+library(rpart)
+library(ROCR)
+```
+
+***
+# Decision Tree
+***
+## Read CSV
+```{r}
+setwd("C:/Users/DELL/Desktop/Notes/Data Mining and Machine Learning/Project/Final/911/")
+data911 <- read.csv("Cleaned911.csv", header = T, na.strings = c(""), stringsAsFactors = T)
+head(data911)
+```
+
+## Cleaning the data
+```{r}
+# checking columns in the dataset
+names(data911)
+
+# reducing the number of categories in title attribute
+str(data911)
+data911 <- mutate(data911, emergencyType = ifelse(grepl("EMS",title),"EMS",
+                                        ifelse(grepl("Fire",title),"Fire","Traffic")))
+table(data911$emergencyType)
+
+# renaming columns
+names(data911)[1:2] <- c("latitude", "longitude")
+names(data911)[7] <- "town"
+
+# converting zip code and emergency type to factor variable
+data911$zip <- as.factor(data911$zip)
+data911$emergencyType <- as.factor(data911$emergencyType)
+str(data911)
+```
+
+```{r}
+
+# seperating Date and Time into two different columns
+data911 <- tidyr::separate(data911, timeStamp, c("date", "time"), sep = " ", remove = FALSE)
+
+# drop columns as they are not required
+data911 <- data911[, -c(3, 5, 6, 10, 11)]
+names(data911)
+str(data911)
+```
+
+```{r}
+# creating new columns for capturing day of week and time of day
+data911$date <- as.Date(data911$date,format="%m/%d/%Y") 
+
+# format changed to yyyymmdd from mmddyyyy
+data911$day <- wday(data911$date, label=TRUE)
+names(data911)
+
+```
+
+```{r}
+
+# creating new column to capture whether day is a weekend or weekday
+data911$isWeekend <- ifelse(data911$day %in% 
+                    c("Sun", "Sat", "Fri"), 1, 0)
+data911$isWeekend <- as.factor(data911$isWeekend)
+
+# creating new categorical column to capture whether the time of day is morning, afternoon, evening or night
+# 12:01 - 4:00 afternoon
+# 4:01 - 8:00 evening
+# 8:01 - 6:00 night
+# 6:01 - 11:59 morning
+data911$timeOfDay <- with(data911,  ifelse(time >= "12:01" & time <= "16:00", "afternoon",
+                 ifelse(time >= "16:01" & time <= "20:00", "evening",
+                    ifelse( time >= "20:01" & time <= "6:00", "night", "morning"))))
+
+data911$timeOfDay <- as.factor(data911$timeOfDay)
+
+# checking columns in dataset
+names(data911)
+
+```
+
+```{r}
+
+# extracting past 6 months data as processing time was too high for entire dataset
+data911 <- data911 %>%
+  select(latitude, longitude, zip, date, time, town, emergencyType, day, isWeekend, timeOfDay) %>%
+  filter(date >= "2018-01-01")
+str(data911)
+names(data911)
+
+# creating subset for Decision Tree modelling
+data911DT <- data911[, c(1, 2, 3, 7, 9, 10)]
+
+```
+
+```{r}
+# checking for NA values
+sapply(data911DT,function(x) sum(is.na(x)))
+#names(data911DT)
+
+# creating dummy variables for timeOfDay
+todDummy <- dummy(data911DT$timeOfDay)
+
+# adding newly created columns to the dataset
+data911DT <- data.frame(data911DT, todDummy)
+names(data911DT)
+data911DT <- data911DT[, -c(6, 7)]
+# data911DT <- data911DT[, -c(7, 8)] #when town feature is considered
+
+str(data911DT)
+```
+
+## Splitting the dataset into train and test
+```{r}
+# sampling using Validation Set approach
+s <- sample(1:nrow(data911DT), 0.7 * nrow(data911DT))
+train <- data911DT[s,]
+test <- data911DT[-s,]
+
+
+# checking proporting of classes in the sample datasets
+str(data911DT)
+prop.table(table(train$emergencyType))
+prop.table(table(test$emergencyType))
+```
+
+## K fold cross validation
+```{r}
+# applying k fold Cross Validation and running Decision Tree model
+DTTrainControl <- trainControl(method = "repeatedcv",
+                              number = 10,
+                              repeats = 3)
+
+data911DTModel <- train(emergencyType ~ ., data = train, method = "rpart",
+                  trControl = DTTrainControl, tuneLength = 15)
+
+data911DTModel
+```
+
+## Predict (Train)
+```{r}
+# predicting emergencyType for train data
+train$emergencyTypeTrPred <- predict(data911DTModel, train, type = "raw")
+```
+
+## Evalution (Train)
+```{r}
+# calculating model performance
+confusionMatrix(train$emergencyTypeTrPred, train$emergencyType)
+```
+
+
+## Predict (Test)
+```{r}
+# predicting emergencyType for test data
+test$emergencyTypeTrPred <- predict(data911DTModel, test, type = "raw")
+```
+
+## Evalution (Test)
+```{r}
+# calculating model performance
+confusionMatrix(test$emergencyTypeTrPred, test$emergencyType)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
